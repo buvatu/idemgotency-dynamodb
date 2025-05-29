@@ -4,7 +4,7 @@ accessKeyId: AKIAEXAMPLE
 secretAccessKey: secret
 serviceName: my-test-service
 debugMode: true
-defaultLockTime: 5m
+defaultLockTime: 5s
 operationLockTime:
   test-operation-1: 10s
   test-operation-2: 1m30s

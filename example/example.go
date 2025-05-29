@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	idempotency "github.com/buvatu/idemgotency-dynamodb"
 	"github.com/google/uuid"
 	"log"
@@ -44,6 +45,19 @@ func main() {
 		return
 	}
 	log.Println(result3)
+	result4, err := idempotency.ExecuteExactlyOne("test-operation-4", idempotencyKey, func() (TestStruct, error) {
+		log.Println("test-operation-4")
+		return TestStruct{
+			Name:  "Tung",
+			Email: "buvatu@gmail.com",
+			Age:   36,
+		}, errors.New("test error")
+	})
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+	log.Println(result4)
 }
 
 type TestStruct struct {

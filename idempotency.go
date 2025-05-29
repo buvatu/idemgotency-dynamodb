@@ -4,20 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
-	"encoding/base64"
 	"encoding/gob"
 	"encoding/hex"
 	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -105,9 +104,8 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 	gob.Register(executionResult)
 
 	// If the operation is already executed with the same idempotencyKey, return the result immediately
-	if exists && storedResult != "" {
-		data, _ := base64.StdEncoding.DecodeString(storedResult)
-		dec := gob.NewDecoder(bytes.NewBuffer(data))
+	if exists && storedResult != nil {
+		dec := gob.NewDecoder(bytes.NewBuffer(storedResult))
 		if err = dec.Decode(&executionResult); err != nil {
 			return executionResult, err
 		}
@@ -135,7 +133,13 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 	executionResult, err = idempotentFunction()
 
 	if err != nil {
-		go executor.saveFailOperation(idempotencyID, operationName, lockID, lockedAt, lockedUntil, err.Error())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = executor.saveFailOperation(idempotencyID, operationName, lockID, lockedAt, lockedUntil, err.Error())
+		}()
+		wg.Wait()
 		return executionResult, err
 	}
 
@@ -146,7 +150,7 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 		return executionResult, err
 	}
 
-	if err = executor.saveIdempotentOperationResult(idempotencyID, lockID, base64.StdEncoding.EncodeToString(buf.Bytes())); err != nil {
+	if err = executor.saveIdempotentOperationResult(idempotencyID, lockID, buf.Bytes()); err != nil {
 		return executionResult, err
 	}
 
@@ -154,7 +158,7 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 }
 
 // Get idempotent result
-func (executor *idempotencyExecutor) getStoredIdempotentOperationResult(idempotencyID string) (exists bool, storedResult string, lockID string, lockedUntil time.Time) {
+func (executor *idempotencyExecutor) getStoredIdempotentOperationResult(idempotencyID string) (exists bool, storedResult []byte, lockID string, lockedUntil time.Time) {
 	resp, err := executor.dynamoDBClient.GetItem(context.TODO(), &dynamodb.GetItemInput{
 		TableName: aws.String("idempotent_operation_result"),
 		Key: map[string]types.AttributeValue{
@@ -164,15 +168,21 @@ func (executor *idempotencyExecutor) getStoredIdempotentOperationResult(idempote
 	})
 	if err != nil {
 		executor.logger.Error("fail to get stored idempotent operation result", "idempotencyID", idempotencyID, "error", err)
-		return false, "", "", time.Time{}
+		return false, nil, "", time.Time{}
 	}
 	if resp.Item == nil || len(resp.Item) == 0 { // Record does not exist
-		return false, "", "", time.Time{}
+		return false, nil, "", time.Time{}
 	}
 
-	_ = attributevalue.Unmarshal(resp.Item["lock_id"], &lockID)
-	_ = attributevalue.Unmarshal(resp.Item["locked_until"], &lockedUntil)
-	_ = attributevalue.Unmarshal(resp.Item["execution_result"], &storedResult)
+	if av, ok := resp.Item["lock_id"].(*types.AttributeValueMemberS); ok {
+		lockID = av.Value
+	}
+	if av, ok := resp.Item["locked_until"].(*types.AttributeValueMemberS); ok {
+		lockedUntil, _ = time.Parse(time.RFC3339Nano, av.Value)
+	}
+	if av, ok := resp.Item["execution_result"].(*types.AttributeValueMemberB); ok {
+		storedResult = av.Value
+	}
 
 	return true, storedResult, lockID, lockedUntil
 }
@@ -220,7 +230,7 @@ func (executor *idempotencyExecutor) updateLock(idempotencyID string, currentLoc
 	return nil
 }
 
-func (executor *idempotencyExecutor) saveIdempotentOperationResult(idempotencyID string, lockID string, encodedExecutionResult string) error {
+func (executor *idempotencyExecutor) saveIdempotentOperationResult(idempotencyID string, lockID string, encodedExecutionResult []byte) error {
 	_, err := executor.dynamoDBClient.UpdateItem(context.TODO(), &dynamodb.UpdateItemInput{
 		TableName: aws.String("idempotent_operation_result"),
 		Key: map[string]types.AttributeValue{
@@ -231,7 +241,7 @@ func (executor *idempotencyExecutor) saveIdempotentOperationResult(idempotencyID
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":lockID":          &types.AttributeValueMemberS{Value: lockID},
 			":releasedAt":      &types.AttributeValueMemberS{Value: time.Now().Format(time.RFC3339Nano)},
-			":executionResult": &types.AttributeValueMemberS{Value: encodedExecutionResult},
+			":executionResult": &types.AttributeValueMemberB{Value: encodedExecutionResult},
 		},
 	})
 	if err != nil {
@@ -241,7 +251,7 @@ func (executor *idempotencyExecutor) saveIdempotentOperationResult(idempotencyID
 	return nil
 }
 
-func (executor *idempotencyExecutor) saveFailOperation(idempotencyID string, operationName string, lockID string, lockedAt time.Time, lockedUntil time.Time, errorMessage string) {
+func (executor *idempotencyExecutor) saveFailOperation(idempotencyID string, operationName string, lockID string, lockedAt time.Time, lockedUntil time.Time, errorMessage string) error {
 	_, err := executor.dynamoDBClient.PutItem(context.TODO(), &dynamodb.PutItemInput{
 		TableName: aws.String("fail_operation_result"),
 		Item: map[string]types.AttributeValue{
@@ -256,6 +266,7 @@ func (executor *idempotencyExecutor) saveFailOperation(idempotencyID string, ope
 		}})
 	if err != nil {
 		executor.logger.Error("fail to insert fail operation result", "idempotencyID", idempotencyID, "lockID", lockID, "error", err)
-		return
+		return err
 	}
+	return nil
 }
