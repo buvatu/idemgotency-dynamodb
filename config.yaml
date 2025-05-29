@@ -1,0 +1,11 @@
+region: localhost
+useDefaultConfig: false
+accessKeyId: AKIAEXAMPLE
+secretAccessKey: secret
+serviceName: my-test-service
+debugMode: true
+defaultLockTime: 5m
+operationLockTime:
+  test-operation-1: 10s
+  test-operation-2: 1m30s
+  operation3: 500ms

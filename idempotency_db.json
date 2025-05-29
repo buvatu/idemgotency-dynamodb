@@ -1,0 +1,143 @@
+{
+  "ModelName": "idempotency_db",
+  "ModelMetadata": {
+    "Author": "",
+    "DateCreated": "May 28, 2025, 05:17 PM",
+    "DateLastModified": "May 29, 2025, 07:39 AM",
+    "Description": "",
+    "AWSService": "Amazon DynamoDB",
+    "Version": "3.0"
+  },
+  "DataModel": [
+    {
+      "TableName": "fail_operation_result",
+      "KeyAttributes": {
+        "PartitionKey": {
+          "AttributeName": "idempotency_id",
+          "AttributeType": "S"
+        },
+        "SortKey": {
+          "AttributeName": "lock_id",
+          "AttributeType": "S"
+        }
+      },
+      "NonKeyAttributes": [
+        {
+          "AttributeName": "service_name",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "operation_name",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "locked_at",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "locked_until",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "inserted_at",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "error_message",
+          "AttributeType": "S"
+        }
+      ],
+      "DataAccess": {
+        "MySql": {}
+      },
+      "SampleDataFormats": {
+        "lock_id": [
+          "identifiers",
+          "UUID"
+        ],
+        "locked_at": [
+          "date",
+          "ISO 8601 date and time"
+        ],
+        "locked_until": [
+          "date",
+          "ISO 8601 date and time"
+        ],
+        "inserted_at": [
+          "date",
+          "ISO 8601 date and time"
+        ]
+      },
+      "BillingMode": "PAY_PER_REQUEST"
+    },
+    {
+      "TableName": "idempotent_operation_result",
+      "KeyAttributes": {
+        "PartitionKey": {
+          "AttributeName": "idempotency_id",
+          "AttributeType": "S"
+        }
+      },
+      "NonKeyAttributes": [
+        {
+          "AttributeName": "service_name",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "operation_name",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "idempotency_key",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "lock_id",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "locked_at",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "locked_until",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "released_at",
+          "AttributeType": "S"
+        },
+        {
+          "AttributeName": "execution_result",
+          "AttributeType": "S"
+        }
+      ],
+      "DataAccess": {
+        "MySql": {}
+      },
+      "SampleDataFormats": {
+        "idempotency_key": [
+          "identifiers",
+          "UUID"
+        ],
+        "lock_id": [
+          "identifiers",
+          "UUID"
+        ],
+        "locked_at": [
+          "date",
+          "ISO 8601 date and time"
+        ],
+        "locked_until": [
+          "date",
+          "ISO 8601 date and time"
+        ],
+        "released_at": [
+          "date",
+          "ISO 8601 date and time"
+        ]
+      },
+      "BillingMode": "PAY_PER_REQUEST"
+    }
+  ]
+}
