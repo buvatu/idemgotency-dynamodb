@@ -50,6 +50,13 @@ func Init(configFilePath string) error {
 		return errors.New("[Config] fail to parse config file: " + configFilePath + ". Caused by: " + err.Error())
 	}
 
+	if config.ServiceName == "" {
+		return errors.New("[Config] fail to parse config file: " + configFilePath + ". ServiceName is not set")
+	}
+	if config.DefaultLockTime == 0 {
+		return errors.New("[Config] fail to parse config file: " + configFilePath + ". DefaultLockTime is not set")
+	}
+
 	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(config.Region)}
 
 	if config.DebugMode {
@@ -76,6 +83,11 @@ func Init(configFilePath string) error {
 // Initialize the idempotencyExecutor
 var executor *idempotencyExecutor
 
+// ExecuteExactlyOne is a common function that to use to apply idempotency idea
+// Input:
+//   - idempotencyKey: is in UUIDv4 format
+//   - operationName
+//   - idempotentFunction: function needs to be executed as an idempotency function
 func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, idempotentFunction func() (T, error)) (T, error) {
 	var executionResult T
 
@@ -84,7 +96,6 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 	}
 
 	var (
-		err           error
 		idempotencyID string
 		lockID        = uuid.New().String()
 		lockedAt      time.Time
@@ -112,6 +123,9 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 		dec := gob.NewDecoder(bytes.NewBuffer(storedResult))
 		if err = dec.Decode(&executionResult); err != nil {
 			return executionResult, err
+		}
+		if executor.config.DebugMode {
+			executor.logger.Info("the operation is already executed with the same idempotencyKey", "idempotencyID", idempotencyID, "lockID", lockID, "executionResult", executionResult)
 		}
 		return executionResult, nil
 	}
@@ -152,6 +166,10 @@ func ExecuteExactlyOne[T any](operationName string, idempotencyKey uuid.UUID, id
 	if err = executor.saveIdempotentOperationResult(idempotencyID, lockID, buf.Bytes()); err != nil {
 		executor.saveFailResult(idempotencyID, operationName, idempotencyKey.String(), lockID, lockedAt, lockedUntil, err.Error())
 		return executionResult, err
+	}
+
+	if executor.config.DebugMode {
+		executor.logger.Info("the operation is executed successfully", "idempotencyID", idempotencyID, "lockID", lockID, "executionResult", executionResult)
 	}
 
 	return executionResult, nil
